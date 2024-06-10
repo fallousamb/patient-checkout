@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  patient-checkout
+
+  Sample SAM Template for patient-checkout
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Runtime: java17
+    Timeout: 20
+    MemorySize: 512
+    Architectures:
+      - x86_64
+Resources:
+  PatientCheckoutBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+  PatientCheckoutTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: PatientCheckoutTopic
+      TopicName: PatientCheckoutTopic
+  PatientCheckoutFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: patientcheckout
+      Handler: mouride.dev.aws.lambda.s3sns.PatientCheckoutLambda::handleRequest
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Sub ${AWS::StackName}-${AWS::AccountId}-${AWS::Region}
+        -  SNSPublishMessagePolicy:
+             TopicName: !GetAtt PatientCheckoutTopic.TopicName
+      Environment:
+        Variables:
+          PATIENT_CHECKOUT_TOPIC: !Ref PatientCheckoutTopic
+      Events:
+        S3NewObjectEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref PatientCheckoutBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: ".json"
+      DeadLetterQueue:
+        Type: SNS
+        TargetArn: !Ref PatientCheckoutDLQ
+
+  BuildManagementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: patientcheckout
+      Handler: mouride.dev.aws.lambda.s3sns.BuildManagementLambda::handleRequest
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref PatientCheckoutTopic
+
+  ErrorHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: patientcheckout
+      Handler: mouride.dev.aws.lambda.s3sns.ErrorHandlerLambda::handleRequest
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref PatientCheckoutDLQ
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt PatientCheckoutFunction.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Sub ${AWS::AccountId}
+      SourceArn: !GetAtt  PatientCheckoutBucket.Arn
+
+  PatientCheckoutDLQ:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: PatientCheckoutDLQ
+      TopicName: PatientCheckoutDLQ
+
+
+Outputs:
+  PatientCheckoutBucket:
+    Description: "Bucket for PatientCheck"
+    Value: !GetAtt PatientCheckoutBucket.Arn
+  PatientCheckoutFunction:
+    Description: "PatientCheckoutFunction lambda function"
+    Value: !GetAtt PatientCheckoutFunction.Arn
